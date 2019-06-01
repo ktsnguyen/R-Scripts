@@ -35,7 +35,7 @@ print(heat)
 data1$RDSFCOND[is.na(data1$RDSFCOND)] <- "Other"
 data1$RDSFCOND <- as.factor(data1$RDSFCOND)
 
-#Heat Map of Road Conditions
+#Heat Map of Road Conditions!
 heat_road <- ggmap(toronto, extent = "device", legend = "none") + 
   stat_density2d(data = data1, geom = "polygon", aes(x = LONGITUDE, y = LATITUDE, fill = ..level.., alpha = ..level..)) + 
   scale_fill_gradientn(colours = rev(brewer.pal(5, "Spectral"))) +
