@@ -1,0 +1,205 @@
+Data; https://www.kaggle.com/uciml/default-of-credit-card-clients-dataset
+
+#Download/Import required packages
+if("pacman" %in% rownames(installed.packages()) == FALSE) {install.packages("pacman")}
+pacman::p_load("caret" , "dplyr", "ROCR" , "lift" , "glmnet" , "MASS" , "e1071" , "partykit" , "rpart" , "readxl" , "randomForest")
+
+#Importing data
+setwd("C:\\Users\\Sid\\Desktop\\MMA\\MMA 867\\Team Assignment 2\\")
+bankdata <- read_xlsx("my_data.xlsx")
+bankdata_test <- read_xlsx("my_data2.xlsx")
+
+#Combining both train and test data for cleaning
+bankdata_test["default_0"] <- 0
+combined <- rbind(bankdata, bankdata_test)
+combined['ID'] <- 1:nrow(combined)
+
+#Relabelling data as per data dictionary
+combined$EDUCATION[combined$EDUCATION == 0] <- 4
+combined$EDUCATION[combined$EDUCATION == 5] <- 4
+combined$EDUCATION[combined$EDUCATION == 6] <- 4
+combined$MARRIAGE[combined$MARRIAGE == 0] <- 3
+
+# To convert incorrectly classified variables to factors
+combined$SEX <- as.factor(combined$SEX)
+combined$EDUCATION <- as.factor(combined$EDUCATION)
+combined$MARRIAGE <- as.factor(combined$MARRIAGE)
+combined$PAY_1 <- as.factor(combined$PAY_1)
+combined$PAY_2 <- as.factor(combined$PAY_2)
+combined$PAY_3 <- as.factor(combined$PAY_3)
+combined$PAY_4 <- as.factor(combined$PAY_4)
+combined$PAY_5 <- as.factor(combined$PAY_5)
+combined$PAY_6 <- as.factor(combined$PAY_6)
+combined$default_0 <- as.factor(combined$default_0)
+
+#Feature Engineering
+bill <- c("BILL_AMT1", "BILL_AMT2", "BILL_AMT3", "BILL_AMT4", "BILL_AMT5", "BILL_AMT6")
+pay <- c("PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6")
+
+combined['Net_Owing'] <- rowSums(combined[, bill]) - rowSums(combined[, pay])
+combined['Debt_Free'] <- as.factor(ifelse(rowSums(combined[, bill]) <= 0, 1 , 0))
+
+
+#Resplitting data back to train and test
+bankdata <- subset(combined, ID <= 24000)
+bankdata_test <- subset(combined, ID > 24000)
+
+#Splitting training data into a validation set
+set.seed(77850)
+inTrain <- createDataPartition(y = bankdata$default_0,
+                               p = 0.7, list = FALSE) 
+                               
+training <- bankdata[ inTrain,]
+testing <- bankdata[ -inTrain,]
+
+--------------------------------------
+# Logistic Regression Model
+--------------------------------------
+model_logistic<-glm(default_0 ~ . - ID, data=training, family= binomial(logit))
+plot(model_logistic)
+
+#You could use stepAIC as well to select best features, I did not run it here as it took too long, 
+#but if you have the time, feel free to do so.
+#model_logistic_AUC <- stepAIC(model_logistic, direction = 'both', trace = 1)
+
+logistic_probabilities<- predict(model_logistic, testing, type="response")
+logistic_prediction <- logistic_probabilities > 0.2162 #Threshold that provided best profit/performance
+logistic_classification<-as.factor(as.numeric(logistic_prediction))
+
+#Measuring performance with confusion matrix, ROC, AUC, and lift charts
+confusionMatrix(logistic_classification,testing$default_0,positive = "1")
+logistic_ROC_prediction <- prediction(logistic_probabilities, testing$default_0)
+logistic_ROC <- performance(logistic_ROC_prediction,"tpr","fpr")
+
+plot(logistic_ROC)
+
+auc.tmp <- performance(logistic_ROC_prediction,"auc") # To create AUC data
+logistic_auc_testing <- as.numeric(auc.tmp@y.values) # To calculate AUC
+logistic_auc_testing # Result: 0.7740316 with Net_Owing + Debt_Free
+
+plotLift(logistic_probabilities, testing$default_0, cumulative = TRUE, n.buckets = 10) # To generate lift chart
+
+
+--------------------------------------
+# CART Model
+--------------------------------------
+ctree_tree<-ctree(default_0 ~ . - ID ,data=training)
+plot(ctree_tree, gp = gpar(fontsize = 7))
+
+ctree_probabilities<-predict(ctree_tree, newdata=testing, type="prob")
+ctree_prediction <- ctree_probabilities[, 2] > 0.2162 #Threshold
+ctree_classification<-as.factor(as.numeric(ctree_prediction))
+
+#Performance Measurement
+confusionMatrix(ctree_classification,testing$default_0, positive = "1") # Accuracy: 0.8028 - Note that sensitivity is very low
+
+ctree_probabilities_testing <-predict(ctree_tree, newdata=testing, type = "prob")
+ctree_pred_testing <- prediction(ctree_probabilities_testing[,2], testing$default_0) 
+ctree_ROC_testing <- performance(ctree_pred_testing,"tpr","fpr") 
+
+plot(ctree_ROC_testing) 
+
+auc.tmp <- performance(ctree_pred_testing, "auc")
+ctree_auc_testing <- as.numeric(auc.tmp@y.values) 
+ctree_auc_testing
+
+plotLift(ctree_probabilities[,2],  testing$default_0, cumulative = TRUE, n.buckets = 10)
+
+--------------------------------------
+# Decision Trees
+--------------------------------------
+CART_cp = rpart.control(cp = 0.05)
+
+rpart_tree<-rpart(default_0 ~ . - ID , data=training, method="class", control=CART_cp)
+
+printcp(rpart_tree) 
+plotcp(rpart_tree) 
+
+prunned_rpart_tree<-prune(rpart_tree, cp=0.0007) 
+plot(as.party(prunned_rpart_tree), type = "extended",gp = gpar(fontsize = 6)) 
+rpart_prediction_class<-predict(prunned_rpart_tree,newdata=testing, type="class")
+
+#Performance Measurement
+confusionMatrix(rpart_prediction_class,testing$default_0 , positive = "1")
+
+rpart_probabilities_testing <-predict(prunned_rpart_tree,newdata=testing,type = "prob") 
+rpart_pred_testing <- prediction(rpart_probabilities_testing[,2], testing$default_0) 
+rpart_ROC_testing <- performance(rpart_pred_testing,"tpr","fpr") 
+plot(rpart_ROC_testing) 
+
+auc.tmp <- performance(rpart_pred_testing,"auc")
+rpart_auc_testing <- as.numeric(auc.tmp@y.values) 
+rpart_auc_testing 
+
+plotLift(rpart_prediction_class,  testing$default_0, cumulative = TRUE, n.buckets = 10)
+
+
+###
+
+--------------------------------------
+# Random Forest
+--------------------------------------
+model_forest <- randomForest(default_0 ~ . - ID, data=training, 
+                             importance=TRUE,proximity=TRUE,
+                             cutoff = c(0.5, 0.5),type="classification") 
+print(model_forest)
+plot(model_forest)
+importance(model_forest)
+varImpPlot(model_forest)
+
+forest_probabilities<-predict(model_forest,newdata=testing,type="prob") 
+forest_prediction <- forest_probabilities[, 2] > 0.20999
+forest_classification<-as.factor(as.numeric(forest_prediction))
+
+#Performance Measurement
+confusionMatrix(forest_classification , testing$default_0, positive="1") 
+
+forest_ROC_prediction <- prediction(forest_probabilities[,2], testing$default_0) 
+forest_ROC <- performance(forest_ROC_prediction,"tpr","fpr") 
+plot(forest_ROC) 
+
+AUC.tmp <- performance(forest_ROC_prediction,"auc")
+forest_AUC <- as.numeric(AUC.tmp@y.values) 
+forest_AUC 
+
+plotLift(forest_probabilities[,2],  testing$default_0, cumulative = TRUE, n.buckets = 10)
+
+Lift_forest <- performance(forest_ROC_prediction , "lift" , "rpp")
+plot(Lift_forest)
+
+--------------------------------------
+# Threshold Function
+--------------------------------------
+
+#update x with the prediction probailites
+x <- logistic_probabilities
+
+thresholdCheck <- function(x){
+  i <- 0
+  k <- 1
+  data <- list()
+  while(i <= 1){
+    i <- i + 0.001
+    p <- confusionMatrix(as.factor(ifelse(x>i,1,0)),as.factor(testing$default_0),positive="1")
+    O_O <- p$table[1]
+    O_X <- p$table[3]
+    X_O <- p$table[2]
+    X_X <- p$table[4]
+    sens <- p$byClass[1]
+    spec <- p$byClass[2]
+    pos <- p$byClass[3]
+    neg <- p$byClass[4]
+    dollar.value <- O_O/(O_O +O_X +  X_O + X_X)*1500*1000 -  O_X/(O_O +O_X +  X_O + X_X)*5000*1000
+    df <- data.frame(i,O_O,O_X,X_O,X_X,dollar.value,sens,spec,pos,neg)
+    k <- k + 1
+    data[[k]] <- df
+  }
+  final <- bind_rows(data)
+  final <- final %>% arrange(desc(dollar.value))
+}
+
+t <- thresholdCheck(x)
+glimpse(t)
+
+
+
